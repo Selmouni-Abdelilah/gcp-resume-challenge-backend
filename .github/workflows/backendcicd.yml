@@ -1,0 +1,57 @@
+name: Backend 
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  Test:
+    name:  Static Code Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@main
+
+      - name: Set up Python
+        uses: actions/setup-python@main
+        with:
+          python-version: 3.x
+
+      - name: Pylint Tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r googlecloudfunction/requirements.txt
+          pylint googlecloudfunction/main.py 
+  Deploy:
+    name: Infra deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@main
+      - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+        working-directory: .
+        env:
+          file_name: ""
+        run: |
+          sudo apt install -y zip
+          pushd googlecloudfunction 
+          zip -r main.zip .
+          export file_name="main_$(md5sum main.zip | awk '{print $1}').zip"
+          mv main.zip ${file_name}
+          sed -i "s/^zip_file =.*/zip_file = \"$file_name\"/" ../terraform/terraform.tfvars
+          gcloud auth activate-service-account --key-file ../gcp-credentials.json
+          gsutil cp ${file_name} gs://cloudresume-function-bucket
+          popd
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+        
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: |
+          terraform apply -var "project=${{ secrets.PROJECT }}" --auto-approve
